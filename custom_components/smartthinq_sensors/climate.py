@@ -29,6 +29,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback, current_platform
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers import config_validation as cv
+
 
 from . import LGEDevice
 from .const import DOMAIN, LGE_DEVICES, LGE_DISCOVERY_NEW
@@ -39,6 +41,7 @@ from .wideq.devices.ac import (
     AWHP_MIN_TEMP,
     ACFanSpeed,
     ACMode,
+    ACConvertibleMode,
     AirConditionerDevice,
 )
 
@@ -52,6 +55,9 @@ SWING_PREFIX = ["Vertical", "Horizontal"]
 
 # service definitions
 SERVICE_SET_SLEEP_TIME = "set_sleep_time"
+SERVICE_SET_PRESET_MODE = "set_preset_mode"
+SERVICE_SET_SWING_MODE = "set_swing_mode"
+SERVICE_SET_FAN_MODE = "set_fan_mode"
 
 HVAC_MODE_LOOKUP: dict[str, HVACMode] = {
     ACMode.AI.name: HVACMode.AUTO,
@@ -71,10 +77,15 @@ FAN_MODE_LOOKUP: dict[str, str] = {
 }
 FAN_MODE_REVERSE_LOOKUP = {v: k for k, v in FAN_MODE_LOOKUP.items()}
 
-PRESET_MODE_LOOKUP: dict[str, dict[str, HVACMode]] = {
-    ACMode.ENERGY_SAVING.name: {"preset": PRESET_ECO, "hvac": HVACMode.COOL},
-    ACMode.ENERGY_SAVER.name: {"preset": PRESET_ECO, "hvac": HVACMode.COOL},
+
+PRESET_MODE_LOOKUP: dict[str, dict[str, str]] = {
+   ACConvertibleMode.AP.name: {"preset": "AP", "convertible_mode": "AP"},
+   ACConvertibleMode.VIRAAT.name: {"preset": "VIRAAT", "convertible_mode": "VIRAAT"},
+   ACConvertibleMode.CONV_80.name: {"preset": "80%", "convertible_mode": "CONV_80"},
+   ACConvertibleMode.CONV_60.name: {"preset": "60%", "convertible_mode": "CONV_60"},
+   ACConvertibleMode.CONV_40.name: {"preset": "40%", "convertible_mode": "CONV_40"},
 }
+
 
 DEFAULT_AC_FEATURES = (
     ClimateEntityFeature.TARGET_TEMPERATURE
@@ -167,6 +178,15 @@ async def async_setup_entry(
         async_dispatcher_connect(hass, LGE_DISCOVERY_NEW, _async_discover_device)
     )
 
+    valid_swing_modes = []
+    valid_preset_modes = [PRESET_NONE] + [mode["preset"] for mode in PRESET_MODE_LOOKUP.values()]
+
+    # For each AC device, extend the valid_swing_modes list with the device's modes
+    for lge_device in lge_cfg_devices.get(DeviceType.AC, []):
+        ac_entity = LGEACClimate(lge_device)
+        valid_swing_modes.extend(ac_entity._attr_swing_modes)
+        
+
     # register services
     platform = current_platform.get()
     platform.async_register_entity_service(
@@ -174,6 +194,29 @@ async def async_setup_entry(
         {vol.Required("sleep_time"): int},
         "async_set_sleep_time",
     )
+    platform.async_register_entity_service(
+        SERVICE_SET_PRESET_MODE,
+        {
+            vol.Required("preset_mode"): vol.All(cv.string, vol.In(valid_preset_modes)),
+        },
+        "async_set_preset_mode",
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_SWING_MODE,
+        {
+            vol.Required("swing_mode"): vol.In(set(valid_swing_modes)),
+        },
+        "async_set_swing_mode",
+    )
+    
+    platform.async_register_entity_service(
+        SERVICE_SET_FAN_MODE,
+        {
+            vol.Required("fan_mode"): vol.In(FAN_MODE_LOOKUP.keys()),
+        },
+        "async_set_fan_mode",
+    )
+
 
 
 class LGEClimate(CoordinatorEntity, ClimateEntity):
@@ -195,6 +238,8 @@ class LGEClimate(CoordinatorEntity, ClimateEntity):
     async def async_set_sleep_time(self, sleep_time: int) -> None:
         """Call the set sleep time command for AC devices."""
         raise NotImplementedError()
+
+
 
 
 class LGEACClimate(LGEClimate):
@@ -230,28 +275,28 @@ class LGEACClimate(LGEClimate):
                 for key, mode in HVAC_MODE_LOOKUP.items()
                 if key in self._device.op_modes
             }
+            # convertible_modes = {value: key for key, value in CONVERTIBLE_MODE_PRESETS.items()}
+            # Include the power save modes as HVAC modes
+            # self._hvac_mode_lookup.update(convertible_modes)
             if not self._hvac_mode_lookup:
                 self._hvac_mode_lookup = {HVAC_MODE_NONE: HVACMode.AUTO}
-
+        _LOGGER.debug(f"Available HVAC modes: {self._hvac_mode_lookup}")
         return self._hvac_mode_lookup
 
-    def _available_preset_modes(self) -> dict[str, str]:
+
+    def _available_preset_modes(self) -> list[str]:
         """Return available preset modes from lookup dict."""
         if self._preset_mode_lookup is None:
-            hvac_modes = list(self._available_hvac_modes().values())
-            modes = {}
-            for key, mode in PRESET_MODE_LOOKUP.items():
-                if key not in self._device.op_modes:
-                    continue
-                # skip preset mode with invalid hvac mode associated
-                if mode["hvac"] not in hvac_modes:
-                    continue
-                # invert key and mode to avoid duplicated preset modes
-                modes[mode["preset"]] = key
-            if modes:
-                self._attr_preset_mode = PRESET_NONE
-            self._preset_mode_lookup = {v: k for k, v in modes.items()}
-        return self._preset_mode_lookup
+            # hvac_modes = list(self._available_hvac_modes().values())
+            
+            # This creates a new dictionary mapping the preset string (e.g., "80%") 
+            # to the key from PRESET_MODE_LOOKUP (e.g., ACConvertibleMode.CONV_80.name)
+            self._preset_mode_lookup = {
+                value["preset"]: key for key, value in PRESET_MODE_LOOKUP.items() 
+            }
+
+        _LOGGER.debug(f"Available preset modes: {self._preset_mode_lookup.keys()}")
+        return list(self._preset_mode_lookup.keys())
 
     def _get_swing_mode(self, hor_mode=False) -> str | None:
         """Return the current swing mode for vert of hor mode."""
@@ -303,17 +348,19 @@ class LGEACClimate(LGEClimate):
         """Return hvac operation i.e. heat, cool mode."""
         op_mode: str | None = self._api.state.operation_mode
         if not self._api.state.is_on or op_mode is None:
-            if self._attr_preset_mode:
-                self._attr_preset_mode = PRESET_NONE
+            # if self._attr_preset_mode:
+            #     self._attr_preset_mode = PRESET_NONE
             return HVACMode.OFF
-        presets = self._available_preset_modes()
-        if op_mode in presets:
-            self._attr_preset_mode = presets[op_mode]
-            return PRESET_MODE_LOOKUP[op_mode]["hvac"]
-        if self._attr_preset_mode:
-            self._attr_preset_mode = PRESET_NONE
+        # presets = self._available_preset_modes()
+        # if op_mode in presets:
+        #     self._attr_preset_mode = presets[op_mode]
+        #     return PRESET_MODE_LOOKUP[op_mode]["hvac"]
+        # if self._attr_preset_mode:
+        #     self._attr_preset_mode = PRESET_NONE
         modes = self._available_hvac_modes()
         return modes.get(op_mode, HVACMode.AUTO)
+
+
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
@@ -333,40 +380,82 @@ class LGEACClimate(LGEClimate):
             await self._device.set_op_mode(operation_mode)
         self._api.async_set_updated()
 
+ 
     @property
     def hvac_modes(self) -> list[HVACMode]:
         """Return the list of available hvac operation modes."""
         modes = self._available_hvac_modes()
+        _LOGGER.debug(f"Available HVAC modes: {modes}")
         return [HVACMode.OFF] + list(modes.values())
 
-    async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set new preset mode."""
-        if not (modes := self._available_preset_modes()):
-            raise NotImplementedError()
 
-        reverse_lookup = {v: k for k, v in modes.items()}
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set new target preset mode."""
+        # Check if the preset mode is None
         if preset_mode == PRESET_NONE:
-            curr_preset = self._attr_preset_mode
-            if curr_preset != PRESET_NONE and self._api.state.is_on:
-                op_mode = reverse_lookup[curr_preset]
-                await self.async_set_hvac_mode(PRESET_MODE_LOOKUP[op_mode]["hvac"])
+            self._attr_preset_mode = None
+            await self._device.set_convertible_mode("None")
+            self._api.async_set_updated()
             return
 
-        if (operation_mode := reverse_lookup.get(preset_mode)) is None:
-            raise ValueError(f"Invalid preset_mode [{preset_mode}]")
+        # Look up the convertible mode mapping using the selected preset mode
+        convertible_mode_info = next(
+            (info for info in PRESET_MODE_LOOKUP.values() if info["preset"] == preset_mode),
+            None,
+        )
 
-        if not self._api.state.is_on:
-            await self._device.power(True)
-        await self._device.set_op_mode(operation_mode)
-        self._api.async_set_updated()
+        if convertible_mode_info:
+            # Parse the percentage value from the convertible mode mapping
+            convertible_mode_key = convertible_mode_info["convertible_mode"]
+            # Call the method to set the convertible mode with the percentage value
+            self._attr_preset_mode = preset_mode
+            if not self._api.state.is_on:
+                await self._device.power(True)
+            await self._device.set_convertible_mode(convertible_mode_key)
+            
+            self._api.async_set_updated()
+        else:
+            _LOGGER.error(f"Invalid preset mode selected: {preset_mode}")
 
+    @property
+    def preset_mode(self):
+        """Return the current preset mode."""
+    
+        # Logging values of ap_mode, mode_jet, convertible_mode
+        _LOGGER.debug(f"AP mode: {self._api.state.ap_mode}")
+        _LOGGER.debug(f"VIRAAT mode: {self._api.state.mode_jet}")
+        _LOGGER.debug(f"Convertible mode: {self._api.state.convertible_mode}")
+
+        # if self._attr_preset_mode is None:
+        if self._api.state.ap_mode == 'ON':
+            _LOGGER.debug(f"AP mode is ON")
+            # set preset to AP
+            return PRESET_MODE_LOOKUP[ACConvertibleMode.AP.name]["preset"]
+        elif self._api.state.mode_jet is True:
+            # set preset to VIRAAT
+            _LOGGER.debug(f"VIRAAT mode is ON")
+            return PRESET_MODE_LOOKUP[ACConvertibleMode.VIRAAT.name]["preset"]
+        elif self._api.state.convertible_mode != 0:
+            # the return value would be 0,80,60,40 - If 80,60,40 it should map to ACConvertibleMode.CONV_80.name,ACConvertibleMode.CONV_60.name,ACConvertibleMode.CONV_40.name
+            _LOGGER.debug(f"Convertible mode is not None")
+            _LOGGER.debug(f"Convertible mode: {str(self._api.state.convertible_mode)}")
+            return PRESET_MODE_LOOKUP['CONV_'+str(self._api.state.convertible_mode)]["preset"]
+        else:
+            return PRESET_NONE
+        # _LOGGER.debug(f"Current convertible mode: {self._api.state.convertible_mode}")
+        # return self._api.state.convertible_mode
+
+    
     @property
     def preset_modes(self) -> list[str] | None:
         """Return the list of available preset modes."""
-        modes = self._available_preset_modes()
-        if not modes:
-            return None
-        return [PRESET_NONE] + list(modes.values())
+        # modes = self._available_preset_modes()
+        # if not modes:
+        #     return None
+        preset_mode_list = [v["preset"] for v in PRESET_MODE_LOOKUP.values()]
+        _LOGGER.debug(f"Available preset modes: {preset_mode_list}")
+        return [PRESET_NONE] + preset_mode_list
+        # return preset_mode_list
 
     @property
     def current_temperature(self) -> float:
@@ -394,6 +483,7 @@ class LGEACClimate(LGEClimate):
     @property
     def fan_mode(self) -> str | None:
         """Return the fan setting."""
+        _LOGGER.debug(f"Current fan mode: {self._api.state.fan_speed}")
         speed = self._api.state.fan_speed
         return FAN_MODE_LOOKUP.get(speed, speed)
 

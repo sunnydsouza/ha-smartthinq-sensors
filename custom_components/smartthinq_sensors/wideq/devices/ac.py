@@ -17,6 +17,7 @@ AWHP_MODEL_TYPE = ["AWHP", "SAC_AWHP"]
 
 SUPPORT_AIR_POLUTION = ["SupportAirPolution", "support.airPolution"]
 SUPPORT_OPERATION_MODE = ["SupportOpMode", "support.airState.opMode"]
+SUPPORT_CONVERTIBLE_MODE = ["SupportConvMode", "airState.powerSave.basic"]
 SUPPORT_WIND_STRENGTH = ["SupportWindStrength", "support.airState.windStrength"]
 SUPPORT_DUCT_ZONE = ["SupportDuctZoneType", "support.airState.ductZone.type"]
 SUPPORT_LIGHT = ["SupportLight", "support.light"]
@@ -45,6 +46,7 @@ SUPPORT_PM = [
 CTRL_BASIC = ["Control", "basicCtrl"]
 CTRL_WIND_DIRECTION = ["Control", "wDirCtrl"]
 CTRL_MISC = ["Control", "miscCtrl"]
+CTRL_SMART_CARE = ["Control", "wModeCtrl"]
 
 CTRL_FILTER_V2 = "filterMngStateCtrl"
 # CTRL_SETTING = "settingInfo"
@@ -60,6 +62,8 @@ STATE_POWER_V1 = "InOutInstantPower"
 # AC Section
 STATE_OPERATION = ["Operation", "airState.operation"]
 STATE_OPERATION_MODE = ["OpMode", "airState.opMode"]
+STATE_CONVERTIBLE_MODE = ["powerSaveBasic", "airState.powerSave.basic"]
+STATE_AP_MODE = ["smartCare", "airState.wMode.smartCare"]
 STATE_CURRENT_TEMP = ["TempCur", "airState.tempState.current"]
 STATE_TARGET_TEMP = ["TempCfg", "airState.tempState.target"]
 STATE_WIND_STRENGTH = ["WindStrength", "airState.windStrength"]
@@ -94,6 +98,9 @@ FILTER_TYPES = [
 
 CMD_STATE_OPERATION = [CTRL_BASIC, "Set", STATE_OPERATION]
 CMD_STATE_OP_MODE = [CTRL_BASIC, "Set", STATE_OPERATION_MODE]
+CMD_STATE_CONV_MODE = [CTRL_BASIC, "Set", STATE_CONVERTIBLE_MODE]
+CMD_STATE_VIRAAT_MODE = [CTRL_BASIC, "Set", STATE_CONVERTIBLE_MODE]
+CMD_STATE_AI_MODE = [CTRL_BASIC, "Set", STATE_CONVERTIBLE_MODE]
 CMD_STATE_TARGET_TEMP = [CTRL_BASIC, "Set", STATE_TARGET_TEMP]
 CMD_STATE_WIND_STRENGTH = [CTRL_BASIC, "Set", STATE_WIND_STRENGTH]
 CMD_STATE_WDIR_HSTEP = [CTRL_WIND_DIRECTION, "Set", STATE_WDIR_HSTEP]
@@ -191,6 +198,14 @@ class ACMode(Enum):
     ENERGY_SAVING = "@AC_MAIN_OPERATION_MODE_ENERGY_SAVING_W"
     ENERGY_SAVER = "@AC_MAIN_OPERATION_MODE_ENERGY_SAVER_W"
 
+class ACConvertibleMode(Enum):
+    """The convertible mode for AC """
+    NONE="@OFF"
+    AP="AP"
+    VIRAAT="VIRAAT"
+    CONV_80 = "@80"
+    CONV_60 = "@60"
+    CONV_40 = "@40"
 
 class ACFanSpeed(Enum):
     """The fan speed for an AC/HVAC device."""
@@ -300,6 +315,7 @@ class AirConditionerDevice(Device):
         self._filter_status_supported = True
 
         self._unit_conv = TempUnitConversion()
+        self._convertible_mode = None
 
     def _f2c(self, value):
         """Convert Fahrenheit to Celsius temperatures for this device if required."""
@@ -542,6 +558,11 @@ class AirConditionerDevice(Device):
         """Return a list of available operation modes."""
         return self._get_property_values(SUPPORT_OPERATION_MODE, ACMode)
 
+    # @cached_property
+    # def conv_modes(self):
+    #     """Return a list of available convertible modes."""
+    #     return self._get_property_values(SUPPORT_CONVERTIBLE_MODE, ACConvertibleMode)
+
     @cached_property
     def fan_speeds(self):
         """Return a list of available fan speeds."""
@@ -686,6 +707,96 @@ class AirConditionerDevice(Device):
         mode_value = self.model_info.enum_value(keys[2], ACMode[mode].value)
         await self.set(keys[0], keys[1], key=keys[2], value=mode_value)
 
+    # async def set_convertible_mode(self, mode):
+    #     """Set the device's convertible mode to an `ACConvertibleMode` value."""
+    #     # if mode not in self.conv_modes:
+    #     #     raise ValueError(f"Invalid convertible mode: {mode}")
+    #     _LOGGER.debug(f"mode: {mode}")
+
+    #     # Special handling if the mode is 'AI' or 'VIRAAT'
+    #     if mode == "AP":
+    #         await self.set({
+    #             "ctrlKey": "wModeCtrl",
+    #             "command": "Set",
+    #             "dataSetList": {"airState.wMode.smartCare": 1}
+    #         },"")
+    #     elif mode == "VIRAAT":
+    #         await self.set_mode_jet(True)
+    #     # else if in any of CONV_80, CONV_60, CONV_40
+    #     elif mode in ["CONV_80", "CONV_60", "CONV_40"]:
+    #         keys = self._get_cmd_keys(CMD_STATE_CONV_MODE)
+    #         _LOGGER.debug(f"keys: {keys}")
+    #         # _LOGGER.debug(f"model_info: {self.model_info.as_dict()}")
+    #         mode_value = self.model_info.enum_value(keys[2], ACConvertibleMode[mode].value)
+    #         if mode_value is None:
+    #             _LOGGER.error(f"No value found for mode {ACConvertibleMode[mode].value} in model_info")
+    #             return
+
+    #         _LOGGER.debug(f"Setting convertible mode to: {mode_value}")
+    #         # value=ACConvertibleMode[mode].value
+    #         # _LOGGER.debug(f"Setting convertible mode to: {mode_value}")
+    #         await self.set(keys[0], keys[1], key=keys[2], value=int(mode_value))
+
+    # async def convertible_mode(self):
+    #     return self._convertible_mode
+
+    async def set_convertible_mode(self, mode):
+        """Set the device's convertible mode."""
+        _LOGGER.debug(f"Call sent to set_convertible_mode with mode: {mode}")
+        if mode == "None":
+            await self.set_ap_mode(False)
+            await self.set_mode_jet(False)
+            await self.set_convertible_off()
+            # set default temperature of 26
+            await self.set_target_temp(26)
+            # self._convertible_mode = ACConvertibleMode.NONE.name
+        elif mode == ACConvertibleMode.AP.value:
+            await self.set_ap_mode(True)
+            # self._convertible_mode = ACConvertibleMode.AP.value
+        elif mode == ACConvertibleMode.VIRAAT.value:
+            await self.set_mode_jet(True)
+            # self._convertible_mode = ACConvertibleMode.VIRAAT.value
+        elif mode in [ACConvertibleMode.CONV_80.name,ACConvertibleMode.CONV_60.name,ACConvertibleMode.CONV_40.name]:
+            # _LOGGER.debug(f"Convertible mode enum name :{ACConvertibleMode.CONV_80.name}")
+            await self.set_specific_convertible_mode(mode)
+        self._convertible_mode = mode
+    
+    async def set_ap_mode(self, enable: bool):
+        """Enable or disable AP mode."""
+        if enable:
+            await self.set({
+                "ctrlKey": "wModeCtrl",
+                "command": "Set",
+                "dataSetList": {"airState.wMode.smartCare": 1}
+            }, "")
+            
+            
+        else:
+            await self.set({
+                "ctrlKey": "wModeCtrl",
+                "command": "Set",
+                "dataSetList": {"airState.wMode.smartCare": 0}
+            }, "")   
+            
+
+    async def set_convertible_off(self):
+        """Turn off convertible mode."""
+        _LOGGER.debug("Turning off convertible mode")
+        await self.set_specific_convertible_mode(ACConvertibleMode.NONE.name)
+
+    async def set_specific_convertible_mode(self, mode):
+        """Set a specific convertible mode."""
+        keys = self._get_cmd_keys(CMD_STATE_CONV_MODE)
+        _LOGGER.debug(f"keys: {keys}")
+        mode_value = self.model_info.enum_value(keys[2], ACConvertibleMode[mode].value)
+        if mode_value is None:
+            _LOGGER.error(f"No value found for mode {mode} in model_info")
+            return
+
+        _LOGGER.debug(f"Setting convertible mode to: {mode_value}")
+        await self.set(keys[0], keys[1], key=keys[2], value=mode_value)
+        
+    
     async def set_fan_speed(self, speed):
         """Set the fan speed to a value from the `ACFanSpeed` enum."""
         if speed not in self.fan_speeds:
@@ -760,7 +871,7 @@ class AirConditionerDevice(Device):
             if self._status.operation_mode == ACMode.HEAT.name:
                 jet_key = JetMode.HEAT
             else:
-                jet_key = JetMode.COOL
+                jet_key = JetMode.HIMALAYAS
         else:
             jet_key = JetMode.OFF
         keys = self._get_cmd_keys(CMD_STATE_MODE_JET)
@@ -973,6 +1084,7 @@ class AirConditionerStatus(DeviceStatus):
         self._airmon_on = None
         self._filter_use_time_inverted = True
         self._current_temp = None
+        self._preset_mode = None
 
     def _str_to_temp(self, str_temp):
         """Convert a string to either an `int` or a `float` temperature."""
@@ -1047,6 +1159,7 @@ class AirConditionerStatus(DeviceStatus):
     @property
     def operation_mode(self):
         """Return current device operation mode."""
+        _LOGGER.debug("Received call to operation_mode")
         key = self._get_state_key(STATE_OPERATION_MODE)
         if (value := self.lookup_enum(key, True)) is None:
             return None
@@ -1138,6 +1251,37 @@ class AirConditionerStatus(DeviceStatus):
         key = self._get_state_key(STATE_TARGET_TEMP)
         return self._str_to_temp(self._data.get(key))
 
+    # @property
+    # def convertible_mode(self):
+    #     """Return the currnet convertible mode"""
+    #     if self.ap_mode == "ON":
+    #         return ACConvertibleMode.AP.value
+    #     elif self.mode_jet == True:
+    #         return ACConvertibleMode.VIRAAT.value
+    #     else:
+    #         key = self._get_state_key(STATE_CONVERTIBLE_MODE)
+    #         # if self._data.get(key) is any of 80,60,40 then return the value, else 0 
+    #         return self._data.get(key) if self._data.get(key) in ["80","60","40"] else "None"
+        
+    
+    @property
+    def convertible_mode(self):
+        """Return the current convertible mode"""
+        key = self._get_state_key(STATE_CONVERTIBLE_MODE)
+        # if self._data.get(key) is any of 80,60,40 then return the value, else 0 
+        return int(self._data.get(key)) if int(self._data.get(key)) in [80,60,40] else 0
+      
+    @property
+    def viraat_mode(self):
+        return self.mode_jet
+
+
+    @property
+    def ap_mode(self):
+        """Return target temperature."""
+        key = self._get_state_key(STATE_AP_MODE)
+        return "ON" if int(self._data.get(key))==1 else "OFF"
+           
     @property
     def duct_zones_state(self):
         """Return current state for duct zones."""

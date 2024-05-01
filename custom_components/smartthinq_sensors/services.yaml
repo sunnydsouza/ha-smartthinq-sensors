@@ -42,7 +42,7 @@ set_fan_mode:
   target:
     entity:
       integration: smartthinq_sensors
-      domain: humidifier
+      domain: humidifier,climate
   fields:
     fan_mode:
       name: Fan mode
@@ -71,3 +71,50 @@ set_sleep_time:
           max: 720
           mode: box
           unit_of_measurement: minutes
+
+set_preset_mode:
+  name: Set preset mode
+  description: Set preset mode for climate device.
+  target:
+    entity:
+      integration: smartthinq_sensors
+      domain: climate
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Entity ID of the climate device
+      required: true
+      example: "climate.hall_ac"
+      selector:
+        entity:
+          domain: climate
+    preset_mode:
+      name: Preset mode
+      description: New value of preset mode.Value should be one of 'none','AP','VIRAAT','80%','60%','40%'
+      required: true
+      example: "80%"
+      selector:
+        text:
+set_swing_mode:
+  name: Set swing mode
+  description: Set swing mode for climate device.
+  target:
+    entity:
+      integration: smartthinq_sensors
+      domain: climate
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Entity ID of the climate device
+      required: true
+      example: "climate.hall_ac"
+      selector:
+        entity:
+          domain: climate
+    swing_mode:
+      name: Swing mode
+      description: New value of swing mode.Value should be one of 'Auto','Horizontal','Vertical'
+      required: true
+      example: "Auto"
+      selector:
+        text:
