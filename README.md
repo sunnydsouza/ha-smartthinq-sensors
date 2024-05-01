@@ -25,6 +25,24 @@ Supported devices are:
 - Washer
 - Water Heater
 
+## Modifications for INDIAN LG AC units with CONVERTIBLE modes
+This fork has been modified to support Indian LG AC units with CONVERTIBLE modes. The following changes have been made:
+- Added presets for CONVERTIBLE modes in the AC unit
+- User can now select preset mode from the climate card which supports CONVERTIBLE modes and below are the available modes:
+  - None (No energy saving mode) - 100% capacity
+  - VIRAAT - 110% capacity
+  - 80% - 80% capacity
+  - 60% - 60% capacity
+  - 40% - 40% capacity
+- Added services to set the preset, opening options for automations
+- There was a service for setting the fan speed, however limited to humidity domain. This has been added for the climate domain as well
+
+**Screenshots**:
+
+![image](images/presets-1.png)
+
+![image](images/presets-2.png)
+
 **Important**: The component will **not work if you have logged into the ThinQ application and registered your devices using a social network account** (Google, Facebook or Amazon). In order to use the component you need to create a new independent LG account and make sure you log into the ThinQ app and associate your devices with it.
 If during configuration you receive the message "No SmartThinQ devices found", probably your devices are still associated with the social network account. To solve the problem perform the following step:
 
@@ -399,6 +417,9 @@ type: vertical-stack
 ```
 
 </details>
+
+
+
 
 ## Obtaining API Information
 
